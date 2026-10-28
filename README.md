@@ -1,38 +1,21 @@
 # My Week App
 
-## Project Choice
-I chose: **My Week**
+My Week is a Flutter app that helps you organize your class schedule. My data is now saved on the phone with `shared_preferences`, so nothing is lost when the app closes, and it shows the live Kigali temperature from the Open-Meteo API.
+
+## Screenshots
+
+![Before closing](screenshots/before.png)
+![After running again](screenshots/after.png)
+![Live data from an API](screenshots/api.png)
+![No internet](screenshots/no-internet.png)
 
 ## Features
 - Browse the week by day (Mon–Fri) using day chips.
 - Add, edit, and delete courses.
 - Automatic clash detection: clashing courses are highlighted in red and name the conflicting course.
 - Live calculation of per-day totals and the overall week total.
-- Input validation for times (must be HH:MM, end time must be after start time).
-- Empty states for days with no classes.
-- Delete confirmation ("Are you sure?") dialog.
-
-## Screenshots
-
-### 1. Monday View
-*Showing the correct 3h 30m total with no red clashes (touching times).*
-![Monday View](screenshots/monday_view.png)
-
-### 2. Wednesday Clashes
-*Showing the red warnings and the clash messages.*
-![Wednesday Clashes](screenshots/wednesday_clashes.png)
-
-### 3. Add Course
-*The form to add a new course.*
-![Add Course](screenshots/add_screen.png)
-
-### 4. Edit Course
-*Editing an existing course.*
-![Edit Course](screenshots/edit_screen.png)
-
-### 5. Validation Error
-*The app refusing invalid input with a warning message.*
-![Validation Error](screenshots/validation_error.png)
+- Data is saved locally using `shared_preferences`.
+- Shows live weather data from Open-Meteo API.
 
 ## Think Answers
 
