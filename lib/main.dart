@@ -1,7 +1,12 @@
 import 'package:flutter/material.dart';
-import 'screens/week_screen.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'auth_gate.dart';
 
-void main() => runApp(const MyWeekApp());
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp();
+  runApp(const MyWeekApp());
+}
 
 class MyWeekApp extends StatelessWidget {
   const MyWeekApp({super.key});
@@ -15,7 +20,7 @@ class MyWeekApp extends StatelessWidget {
         colorSchemeSeed: Colors.indigo,
         useMaterial3: true,
       ),
-      home: const WeekScreen(),
+      home: const AuthGate(),
     );
   }
 }

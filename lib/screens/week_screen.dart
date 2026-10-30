@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'dart:convert';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../models/course.dart';
 import '../data/sample_data.dart';
 import '../logic/time_utils.dart';
@@ -15,7 +15,6 @@ class WeekScreen extends StatefulWidget {
 }
 
 class _WeekScreenState extends State<WeekScreen> {
-  List<Course> courses = [];
   String selectedDay = 'Mon';
 
   Weather? weather;
@@ -25,7 +24,6 @@ class _WeekScreenState extends State<WeekScreen> {
   @override
   void initState() {
     super.initState();
-    loadCourses();
     loadWeather();
   }
 
@@ -48,25 +46,13 @@ class _WeekScreenState extends State<WeekScreen> {
     }
   }
 
-  Future<void> saveCourses() async {
-    final prefs = await SharedPreferences.getInstance();
-    final list = courses.map((course) => course.toJson()).toList();
-    await prefs.setString('my_courses', jsonEncode(list));
-  }
-
-  Future<void> loadCourses() async {
-    final prefs = await SharedPreferences.getInstance();
-    final saved = prefs.getString('my_courses');
-    if (saved != null) {
-      final list = jsonDecode(saved) as List;
-      setState(() {
-        courses = list.map((x) => Course.fromJson(x as Map<String, dynamic>)).toList();
-      });
-    } else {
-      setState(() {
-        courses = sampleCourses();
-      });
+  Future<void> addSampleCourses() async {
+    final samples = sampleCourses();
+    final batch = FirebaseFirestore.instance.batch();
+    for (final c in samples) {
+      batch.set(myCourses().doc(), c.toMap());
     }
+    await batch.commit();
   }
 
   Future<void> _openAdd() async {
@@ -74,14 +60,13 @@ class _WeekScreenState extends State<WeekScreen> {
       context,
       MaterialPageRoute(
         builder: (_) => EditCourseScreen(
-          allCourses: courses,
+          allCourses: [],
           initialDay: selectedDay,
         ),
       ),
     );
     if (result != null) {
-      setState(() => courses.add(result));
-      saveCourses();
+      await myCourses().add(result.toMap());
     }
   }
 
@@ -90,7 +75,7 @@ class _WeekScreenState extends State<WeekScreen> {
       context,
       MaterialPageRoute(
         builder: (_) => EditCourseScreen(
-          allCourses: courses,
+          allCourses: [],
           existing: c,
         ),
       ),
@@ -98,30 +83,27 @@ class _WeekScreenState extends State<WeekScreen> {
     if (action == null) return;
 
     if (action is Course) {
-      setState(() {
-        final i = courses.indexOf(c);
-        courses[i] = action;
-      });
-      saveCourses();
+      await myCourses().doc(c.id).update(action.toMap());
     } else if (action == 'delete') {
-      setState(() => courses.remove(c));
-      saveCourses();
+      await myCourses().doc(c.id).delete();
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final byDay = groupByDay(courses);
-    final weekTotal = courses.fold(0, (s, c) => s + (c.end - c.start));
-    final today = byDay[selectedDay] ?? [];
-
     return Scaffold(
       appBar: AppBar(
-        title: Text('My Week · ${formatDuration(weekTotal)}'),
+        title: const Text('My Week'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.logout),
+            tooltip: 'Log out',
+            onPressed: () => FirebaseAuth.instance.signOut(),
+          ),
+        ],
       ),
       body: Column(
         children: [
-          // WEATHER WIDGET ADDED HERE
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(16),
@@ -150,7 +132,6 @@ class _WeekScreenState extends State<WeekScreen> {
               ],
             ),
           ),
-          // REST OF YOUR APP
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
@@ -166,45 +147,93 @@ class _WeekScreenState extends State<WeekScreen> {
             ),
           ),
           Expanded(
-            child: today.isEmpty
-                ? Center(child: Text('No classes on $selectedDay'))
-                : ListView.builder(
-              itemCount: today.length,
-              itemBuilder: (_, i) {
-                final c = today[i];
-                final conflicts = clashesWith(c, today);
-                final hasClash = conflicts.isNotEmpty;
+            child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+              stream: myCourses().snapshots(),
+              builder: (context, snapshot) {
+                if (snapshot.hasError) {
+                  return Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Text(
+                        'Could not load your courses.\n${snapshot.error}',
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  );
+                }
+                if (!snapshot.hasData) {
+                  return const Center(child: CircularProgressIndicator());
+                }
 
-                return ListTile(
-                  leading: Icon(
-                    hasClash ? Icons.warning : Icons.book,
-                    color: hasClash ? Colors.red : null,
-                  ),
-                  title: Text(
-                    c.name,
-                    style: TextStyle(color: hasClash ? Colors.red : null),
-                  ),
-                  subtitle: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('${formatTime(c.start)} – ${formatTime(c.end)}'),
-                      if (hasClash)
-                        Text(
-                          'Clashes with ${conflicts.map((x) => x.name).join(', ')}',
-                          style: const TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
+                final courses = snapshot.data!.docs.map(Course.fromDoc).toList();
+
+                if (courses.isEmpty) {
+                  return Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Text('No courses yet!'),
+                        const SizedBox(height: 16),
+                        ElevatedButton(
+                          onPressed: addSampleCourses,
+                          child: const Text('Load Sample Data'),
                         ),
-                    ],
-                  ),
-                  onTap: () => _openEdit(c),
+                      ],
+                    ),
+                  );
+                }
+
+                final byDay = groupByDay(courses);
+                final weekTotal = courses.fold(0, (s, c) => s + (c.end - c.start));
+                final today = byDay[selectedDay] ?? [];
+
+                return Column(
+                  children: [
+                    Expanded(
+                      child: today.isEmpty
+                          ? Center(child: Text('No classes on $selectedDay'))
+                          : ListView.builder(
+                        itemCount: today.length,
+                        itemBuilder: (_, i) {
+                          final c = today[i];
+                          final conflicts = clashesWith(c, today);
+                          final hasClash = conflicts.isNotEmpty;
+
+                          return ListTile(
+                            leading: Icon(
+                              hasClash ? Icons.warning : Icons.book,
+                              color: hasClash ? Colors.red : null,
+                            ),
+                            title: Text(
+                              c.name,
+                              style: TextStyle(color: hasClash ? Colors.red : null),
+                            ),
+                            subtitle: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text('${formatTime(c.start)} – ${formatTime(c.end)}'),
+                                if (hasClash)
+                                  Text(
+                                    'Clashes with ${conflicts.map((x) => x.name).join(', ')}',
+                                    style: const TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
+                                  ),
+                              ],
+                            ),
+                            onTap: () => _openEdit(c),
+                          );
+                        },
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Text(
+                        '$selectedDay total: ${formatDuration(dayTotalMinutes(today))} · Week: ${formatDuration(weekTotal)}',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                    ),
+                  ],
                 );
               },
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(12),
-            child: Text(
-              '$selectedDay total: ${formatDuration(dayTotalMinutes(today))}',
-              style: Theme.of(context).textTheme.titleMedium,
             ),
           ),
         ],
