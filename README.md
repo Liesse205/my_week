@@ -6,11 +6,9 @@ My Week is a Flutter app that helps you organize your class schedule. It signs u
 
 ![Login](screenshots/login.png)
 
-![My data in Firestore](screenshots/console.png)
+![Main list](screenshots/main list.png)
 
-![Live update](screenshots/live.png)
-
-![Second account sees nothing of mine](screenshots/denied.png)
+![Add a course with a photo](screenshots/add a course with a photo.png)
 
 ## Features
 - Browse the week by day (Mon–Fri) using day chips.
