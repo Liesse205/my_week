@@ -7,6 +7,7 @@ class Course {
   String day;
   int start;
   int end;
+  String? photoUrl; // NEW
 
   Course({
     this.id = '',
@@ -14,6 +15,7 @@ class Course {
     required this.day,
     required this.start,
     required this.end,
+    this.photoUrl, // NEW
   });
 
   Map<String, dynamic> toMap() {
@@ -22,6 +24,7 @@ class Course {
       'day': day,
       'start': start,
       'end': end,
+      'photoUrl': photoUrl, // NEW
     };
   }
 
@@ -33,6 +36,7 @@ class Course {
       day: data['day'] as String,
       start: (data['start'] as num).toInt(),
       end: (data['end'] as num).toInt(),
+      photoUrl: data['photoUrl'] as String?, // NEW
     );
   }
 }

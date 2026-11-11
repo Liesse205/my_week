@@ -1,7 +1,11 @@
+import 'dart:io';
+import 'package:image_picker/image_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../models/course.dart';
 import '../logic/time_utils.dart';
 import '../logic/course_rules.dart';
+import '../state/course_state.dart';
 
 class EditCourseScreen extends StatefulWidget {
   final List<Course> allCourses;
@@ -25,6 +29,9 @@ class _EditCourseScreenState extends State<EditCourseScreen> {
   late final TextEditingController _end;
   late String _day;
 
+  File? _photo;
+  bool _saving = false;
+
   @override
   void initState() {
     super.initState();
@@ -43,7 +50,34 @@ class _EditCourseScreenState extends State<EditCourseScreen> {
     super.dispose();
   }
 
-  void _save() {
+  Future<void> _pickPhoto(ImageSource source) async {
+    final picked = await ImagePicker().pickImage(
+      source: source,
+      maxWidth: 1200,
+      imageQuality: 70,
+    );
+    if (picked == null) return;
+    setState(() => _photo = File(picked.path));
+  }
+
+  Widget _photoPreview() {
+    if (_photo != null) {
+      return Image.file(_photo!, height: 180, fit: BoxFit.cover);
+    }
+    final saved = widget.existing?.photoUrl;
+    if (saved != null) {
+      return Image.network(
+        saved,
+        height: 180,
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stack) =>
+        const SizedBox(height: 180, child: Center(child: Icon(Icons.broken_image))),
+      );
+    }
+    return const SizedBox.shrink();
+  }
+
+  Future<void> _save() async {
     final err = validateCourse(
       name: _name.text,
       startRaw: _start.text,
@@ -56,14 +90,33 @@ class _EditCourseScreenState extends State<EditCourseScreen> {
       return;
     }
 
-    final course = Course(
-      name: _name.text.trim(),
-      day: _day,
-      start: parseTime(_start.text)!,
-      end: parseTime(_end.text)!,
-    );
+    final brain = context.read<CourseState>();
+    setState(() => _saving = true);
 
-    Navigator.pop(context, course);
+    try {
+      String? photoUrl = widget.existing?.photoUrl;
+
+      if (_photo != null) {
+        photoUrl = await brain.uploadPhoto(_photo!);
+      }
+
+      final course = Course(
+        id: widget.existing?.id ?? '',
+        name: _name.text.trim(),
+        day: _day,
+        start: parseTime(_start.text)!,
+        end: parseTime(_end.text)!,
+        photoUrl: photoUrl,
+      );
+
+      if (mounted) Navigator.pop(context, course);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _saving = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not save: $e')),
+      );
+    }
   }
 
   Future<void> _confirmDelete() async {
@@ -82,11 +135,19 @@ class _EditCourseScreenState extends State<EditCourseScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final weekTotal = context.watch<CourseState>().weekTotal;
+
     return Scaffold(
       appBar: AppBar(title: Text(widget.existing == null ? 'Add Course' : 'Edit Course')),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          Text(
+            'Your week total: ${formatDuration(weekTotal)}',
+            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 24),
+
           TextField(
             controller: _name,
             decoration: const InputDecoration(labelText: 'Course Name'),
@@ -111,15 +172,42 @@ class _EditCourseScreenState extends State<EditCourseScreen> {
             controller: _end,
             decoration: const InputDecoration(labelText: 'End Time (e.g. 10:00)'),
           ),
+
+          const SizedBox(height: 24),
+
+          _photoPreview(),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _saving ? null : () => _pickPhoto(ImageSource.camera),
+                  icon: const Icon(Icons.photo_camera),
+                  label: const Text('Camera'),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _saving ? null : () => _pickPhoto(ImageSource.gallery),
+                  icon: const Icon(Icons.photo_library),
+                  label: const Text('Gallery'),
+                ),
+              ),
+            ],
+          ),
+
           const SizedBox(height: 24),
           FilledButton(
-            onPressed: _save,
-            child: const Text('Save'),
+            onPressed: _saving ? null : _save,
+            child: _saving
+                ? const CircularProgressIndicator()
+                : const Text('Save'),
           ),
           if (widget.existing != null) ...[
             const SizedBox(height: 12),
             TextButton(
-              onPressed: _confirmDelete,
+              onPressed: _saving ? null : _confirmDelete,
               child: const Text('Delete Course', style: TextStyle(color: Colors.red)),
             ),
           ]

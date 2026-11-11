@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:provider/provider.dart';
 import '../models/course.dart';
-import '../data/sample_data.dart';
 import '../logic/time_utils.dart';
 import '../logic/course_rules.dart';
 import 'edit_course_screen.dart';
 import '../weather.dart';
+import '../state/course_state.dart';
 
 class WeekScreen extends StatefulWidget {
   const WeekScreen({super.key});
@@ -46,54 +46,55 @@ class _WeekScreenState extends State<WeekScreen> {
     }
   }
 
-  Future<void> addSampleCourses() async {
-    final samples = sampleCourses();
-    final batch = FirebaseFirestore.instance.batch();
-    for (final c in samples) {
-      batch.set(myCourses().doc(), c.toMap());
-    }
-    await batch.commit();
-  }
-
   Future<void> _openAdd() async {
+    final brain = context.read<CourseState>();
     final result = await Navigator.push<Course>(
       context,
       MaterialPageRoute(
-        builder: (_) => EditCourseScreen(
-          allCourses: [],
-          initialDay: selectedDay,
+        builder: (_) => ChangeNotifierProvider<CourseState>.value(
+          value: brain,
+          child: EditCourseScreen(
+            allCourses: [],
+            initialDay: selectedDay,
+          ),
         ),
       ),
     );
     if (result != null) {
-      await myCourses().add(result.toMap());
+      await brain.add(result);
     }
   }
 
   Future<void> _openEdit(Course c) async {
+    final brain = context.read<CourseState>();
     final action = await Navigator.push<Object>(
       context,
       MaterialPageRoute(
-        builder: (_) => EditCourseScreen(
-          allCourses: [],
-          existing: c,
+        builder: (_) => ChangeNotifierProvider<CourseState>.value(
+          value: brain,
+          child: EditCourseScreen(
+            allCourses: [],
+            existing: c,
+          ),
         ),
       ),
     );
     if (action == null) return;
 
     if (action is Course) {
-      await myCourses().doc(c.id).update(action.toMap());
+      await brain.edit(c.id, action);
     } else if (action == 'delete') {
-      await myCourses().doc(c.id).delete();
+      await brain.remove(c);
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final brain = context.watch<CourseState>();
+
     return Scaffold(
       appBar: AppBar(
-        title: const Text('My Week'),
+        title: Text('My Week · ${formatDuration(brain.weekTotal)}'),
         actions: [
           IconButton(
             icon: const Icon(Icons.logout),
@@ -147,94 +148,30 @@ class _WeekScreenState extends State<WeekScreen> {
             ),
           ),
           Expanded(
-            child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-              stream: myCourses().snapshots(),
-              builder: (context, snapshot) {
-                if (snapshot.hasError) {
-                  return Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(24),
-                      child: Text(
-                        'Could not load your courses.\n${snapshot.error}',
-                        textAlign: TextAlign.center,
-                      ),
-                    ),
-                  );
-                }
-                if (!snapshot.hasData) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-
-                final courses = snapshot.data!.docs.map(Course.fromDoc).toList();
-
-                if (courses.isEmpty) {
-                  return Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        const Text('No courses yet!'),
-                        const SizedBox(height: 16),
-                        ElevatedButton(
-                          onPressed: addSampleCourses,
-                          child: const Text('Load Sample Data'),
-                        ),
-                      ],
-                    ),
-                  );
-                }
-
-                final byDay = groupByDay(courses);
-                final weekTotal = courses.fold(0, (s, c) => s + (c.end - c.start));
-                final today = byDay[selectedDay] ?? [];
-
-                return Column(
-                  children: [
-                    Expanded(
-                      child: today.isEmpty
-                          ? Center(child: Text('No classes on $selectedDay'))
-                          : ListView.builder(
-                        itemCount: today.length,
-                        itemBuilder: (_, i) {
-                          final c = today[i];
-                          final conflicts = clashesWith(c, today);
-                          final hasClash = conflicts.isNotEmpty;
-
-                          return ListTile(
-                            leading: Icon(
-                              hasClash ? Icons.warning : Icons.book,
-                              color: hasClash ? Colors.red : null,
-                            ),
-                            title: Text(
-                              c.name,
-                              style: TextStyle(color: hasClash ? Colors.red : null),
-                            ),
-                            subtitle: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text('${formatTime(c.start)} – ${formatTime(c.end)}'),
-                                if (hasClash)
-                                  Text(
-                                    'Clashes with ${conflicts.map((x) => x.name).join(', ')}',
-                                    style: const TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
-                                  ),
-                              ],
-                            ),
-                            onTap: () => _openEdit(c),
-                          );
-                        },
-                      ),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: Text(
-                        '$selectedDay total: ${formatDuration(dayTotalMinutes(today))} · Week: ${formatDuration(weekTotal)}',
-                        style: Theme.of(context).textTheme.titleMedium,
-                      ),
-                    ),
-                  ],
-                );
-              },
-            ),
+            child: brain.error != null
+                ? Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Text(brain.error!, textAlign: TextAlign.center),
+              ),
+            )
+                : brain.loading
+                ? const Center(child: CircularProgressIndicator())
+                : brain.courses.isEmpty
+                ? Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Text('No courses yet!'),
+                  const SizedBox(height: 16),
+                  ElevatedButton(
+                    onPressed: () => context.read<CourseState>().addSamples(),
+                    child: const Text('Load Sample Data'),
+                  ),
+                ],
+              ),
+            )
+                : _buildList(brain),
           ),
         ],
       ),
@@ -242,6 +179,60 @@ class _WeekScreenState extends State<WeekScreen> {
         onPressed: _openAdd,
         child: const Icon(Icons.add),
       ),
+    );
+  }
+
+  Widget _buildList(CourseState brain) {
+    final byDay = groupByDay(brain.courses);
+    final today = byDay[selectedDay] ?? [];
+
+    return Column(
+      children: [
+        Expanded(
+          child: today.isEmpty
+              ? Center(child: Text('No classes on $selectedDay'))
+              : ListView.builder(
+            itemCount: today.length,
+            itemBuilder: (_, i) {
+              final c = today[i];
+              final conflicts = clashesWith(c, today);
+              final hasClash = conflicts.isNotEmpty;
+
+              return ListTile(
+                leading: c.photoUrl == null
+                    ? Icon(
+                  hasClash ? Icons.warning : Icons.book,
+                  color: hasClash ? Colors.red : null,
+                )
+                    : CircleAvatar(backgroundImage: NetworkImage(c.photoUrl!)),
+                title: Text(
+                  c.name,
+                  style: TextStyle(color: hasClash ? Colors.red : null),
+                ),
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('${formatTime(c.start)} – ${formatTime(c.end)}'),
+                    if (hasClash)
+                      Text(
+                        'Clashes with ${conflicts.map((x) => x.name).join(', ')}',
+                        style: const TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
+                      ),
+                  ],
+                ),
+                onTap: () => _openEdit(c),
+              );
+            },
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.all(12),
+          child: Text(
+            '$selectedDay total: ${formatDuration(dayTotalMinutes(today))} · Week: ${formatDuration(brain.weekTotal)}',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+        ),
+      ],
     );
   }
 }
